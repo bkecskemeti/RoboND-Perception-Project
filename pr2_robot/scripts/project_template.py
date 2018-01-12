@@ -51,25 +51,91 @@ def pcl_callback(pcl_msg):
 
 # Exercise-2 TODOs:
 
-    # TODO: Convert ROS msg to PCL data
-    
-    # TODO: Statistical Outlier Filtering
+    # Convert ROS msg to PCL data
+    cloud = ros_to_pcl(pcl_msg)    
 
-    # TODO: Voxel Grid Downsampling
+    # Statistical Outlier Filtering
+    cloud_filtered = cloud.make_statistical_outlier_filter()
+    cloud_filtered.set_mean_k(3)    
+    cloud_filtered.set_std_dev_mul_thresh(.1)
+    cloud_filtered = cloud_filtered.filter()
 
-    # TODO: PassThrough Filter
+    # Voxel Grid Downsampling
+    vox = cloud_filtered.make_voxel_grid_filter()
+    LEAF_SIZE = 0.01
+    vox.set_leaf_size(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE)
+    cloud_filtered = vox.filter()  
 
-    # TODO: RANSAC Plane Segmentation
+    # PassThrough Filter
+    passthrough = cloud_filtered.make_passthrough_filter()
+    passthrough.set_filter_field_name('z')
+    axis_min, axis_max = 0.5, 0.8
+    passthrough.set_filter_limits(axis_min, axis_max)
 
-    # TODO: Extract inliers and outliers
+    cloud_filtered = passthrough.filter()
 
-    # TODO: Euclidean Clustering
+    passthrough = cloud_filtered.make_passthrough_filter()
+    passthrough.set_filter_field_name('x')
+    axis_min, axis_max = 0.4, 0.8
+    passthrough.set_filter_limits (axis_min, axis_max)
+    cloud_filtered = passthrough.filter()
 
-    # TODO: Create Cluster-Mask Point Cloud to visualize each cluster separately
+    # RANSAC Plane Segmentation
 
-    # TODO: Convert PCL data to ROS messages
+    seg = cloud_filtered.make_segmenter()
 
-    # TODO: Publish ROS messages
+    seg.set_model_type(pcl.SACMODEL_PLANE)
+    seg.set_method_type(pcl.SAC_RANSAC)
+
+    max_distance = 0.01
+    seg.set_distance_threshold(max_distance)
+
+    inliers, coefficients = seg.segment()
+
+    # Extract inliers and outliers
+    cloud_table = cloud_filtered.extract(inliers, negative=False)
+    cloud_objects = cloud_filtered.extract(inliers, negative=True)
+
+    # Euclidean Clustering
+    white_cloud = XYZRGB_to_XYZ(cloud_objects)
+    tree = white_cloud.make_kdtree()
+
+    ec = white_cloud.make_EuclideanClusterExtraction()
+
+    ec.set_ClusterTolerance(0.01)
+    ec.set_MinClusterSize(100)
+    ec.set_MaxClusterSize(10000)
+
+    ec.set_SearchMethod(tree)
+
+    cluster_indices = ec.Extract()
+
+    # Create Cluster-Mask Point Cloud to visualize each cluster separately
+
+    cluster_color = get_color_list(len(cluster_indices))
+
+    color_cluster_point_list = []
+
+    for j, indices in enumerate(cluster_indices):
+        for i, indice in enumerate(indices):
+            color_cluster_point_list.append([white_cloud[indice][0],
+                                             white_cloud[indice][1],
+                                             white_cloud[indice][2],
+                                             rgb_to_float(cluster_color[j])])
+
+    cluster_cloud = pcl.PointCloud_PointXYZRGB()
+    cluster_cloud.from_list(color_cluster_point_list)
+
+    # Convert PCL data to ROS messages
+    ros_cloud_table =  pcl_to_ros(cloud_table)
+    ros_cloud_objects = pcl_to_ros(cloud_objects)
+    ros_cluster_cloud = pcl_to_ros(cluster_cloud)
+
+    # Publish ROS messages
+    pcl_objects_pub.publish(ros_cloud_objects)
+    pcl_table_pub.publish(ros_cloud_table)
+    pcl_cluster_pub.publish(ros_cluster_cloud)
+
 
 # Exercise-3 TODOs:
 
@@ -91,7 +157,8 @@ def pcl_callback(pcl_msg):
     # Could add some logic to determine whether or not your object detections are robust
     # before calling pr2_mover()
     try:
-        pr2_mover(detected_objects_list)
+        # pr2_mover(detected_objects_list)
+        pass
     except rospy.ROSInterruptException:
         pass
 
@@ -136,15 +203,25 @@ def pr2_mover(object_list):
 
 if __name__ == '__main__':
 
-    # TODO: ROS node initialization
+    # ROS node initialization
+    rospy.init_node('Perception', anonymous=True)
 
-    # TODO: Create Subscribers
+    # Create Subscribers
+    pcl_sub = rospy.Subscriber("/pr2/world/points", pc2.PointCloud2, pcl_callback, queue_size=1)
 
-    # TODO: Create Publishers
+    # Create Publishers
+    pcl_objects_pub = rospy.Publisher("/pcl_objects", PointCloud2, queue_size=1)
+    pcl_table_pub = rospy.Publisher("/pcl_table", PointCloud2, queue_size=1)
+    pcl_cluster_pub = rospy.Publisher("/pcl_cluster", PointCloud2, queue_size=1)
+    object_markers_pub = rospy.Publisher("/object_markers", Marker, queue_size=1)
+    detected_objects_pub = rospy.Publisher("/detected_objects", DetectedObjectsArray, queue_size=1)
 
     # TODO: Load Model From disk
 
     # Initialize color_list
     get_color_list.color_list = []
 
-    # TODO: Spin while node is not shutdown
+    # Spin while node is not shutdown
+    while not rospy.is_shutdown():
+        rospy.spin()
+
