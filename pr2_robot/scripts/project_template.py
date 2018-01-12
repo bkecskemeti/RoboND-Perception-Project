@@ -56,8 +56,8 @@ def pcl_callback(pcl_msg):
 
     # Statistical Outlier Filtering
     cloud_filtered = cloud.make_statistical_outlier_filter()
-    cloud_filtered.set_mean_k(3)    
-    cloud_filtered.set_std_dev_mul_thresh(.1)
+    cloud_filtered.set_mean_k(10)    
+    cloud_filtered.set_std_dev_mul_thresh(0.2)
     cloud_filtered = cloud_filtered.filter()
 
     # Voxel Grid Downsampling
