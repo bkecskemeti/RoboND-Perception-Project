@@ -136,69 +136,104 @@ def pcl_callback(pcl_msg):
     pcl_table_pub.publish(ros_cloud_table)
     pcl_cluster_pub.publish(ros_cluster_cloud)
 
-
 # Exercise-3 TODOs:
 
     # Classify the clusters! (loop through each detected cluster one at a time)
-
+    detected_objects_labels = []
+    detected_objects = []
+    for index, pts_list in enumerate(cluster_indices):
         # Grab the points for the cluster
-
+        pcl_cluster = cloud_objects.extract(pts_list)
+        ros_cluster = pcl_to_ros(pcl_cluster)
         # Compute the associated feature vector
-
+        chists = compute_color_histograms(ros_cluster, using_hsv=True)
+        normals = get_normals(ros_cluster)
+        nhists = compute_normal_histograms(normals)
+        feature = np.concatenate((chists, nhists))
         # Make the prediction
-
+        prediction = clf.predict(scaler.transform(feature.reshape(1,-1)))
+        label = encoder.inverse_transform(prediction)[0]
+        detected_objects_labels.append(label)
         # Publish a label into RViz
-
+        label_pos = list(white_cloud[pts_list[0]])
+        label_pos[2] += .4
+        object_markers_pub.publish(make_label(label,label_pos, index))
         # Add the detected object to the list of detected objects.
-
+        do = DetectedObject()
+        do.label = label
+        do.cloud = ros_cluster
+        detected_objects.append(do)
+ 
     # Publish the list of detected objects
+    detected_objects_pub.publish(detected_objects)
 
     # Suggested location for where to invoke your pr2_mover() function within pcl_callback()
     # Could add some logic to determine whether or not your object detections are robust
     # before calling pr2_mover()
     try:
-        # pr2_mover(detected_objects_list)
-        pass
+        pr2_mover(detected_objects_list)
     except rospy.ROSInterruptException:
         pass
 
 # function to load parameters and request PickPlace service
 def pr2_mover(object_list):
 
-    # TODO: Initialize variables
+    # Initialize variables
+    labels = []
+    centroids = []
+    pick_position = []
+    dropbox_position = []
 
-    # TODO: Get/Read parameters
+    test_scene_num = Int32()
+    test_scene_num.data = 1
 
-    # TODO: Parse parameters into individual variables
+    # Get/Read parameters
+    pick_list = rospy.get_param('/object_list')
+    dropbox_map = dict([dropbox['group'], dropbox] for dropbox in rospy.get_param('/dropbox')) 
 
-    # TODO: Rotate PR2 in place to capture side tables for the collision map
+    for pick_list_item in pick_list:
 
-    # TODO: Loop through the pick list
+        item_name, item_group = pick_list_item['group']
 
-        # TODO: Get the PointCloud for a given object and obtain it's centroid
+        # Find matching detected objects
+        matches = [do for do in object_list if do.label = item_name]
 
-        # TODO: Create 'place_pose' for the object
+        if matches:
+            target_object = matches[0]
 
-        # TODO: Assign the arm to be used for pick_place
+            object_name, arm_name, = String(), String()
+            pick_pose, place_pose = Pose(), Pose()
 
-        # TODO: Create a list of dictionaries (made with make_yaml_dict()) for later output to yaml format
+            # calculate centroid and other necessary properties
+            points = ros_to_pcl(target_object.cloud).to_array()
+            pick_position = np.mean(points, axis=0)[:3]
+            centroids.append(pick_position)
+        
+            pick_pose.position.x = np.float(pick_position[0])
+            pick_pose.position.y = np.float(pick_position[1])
+            pick_pose.position.z = np.float(pick_position[2])
 
-        # Wait for 'pick_place_routine' service to come up
-        rospy.wait_for_service('pick_place_routine')
+            object_name.data = str(target_object.label)
+            arm_name.data = dropbox_map[item_group]['name']
+        
+            dropbox_position = dropbox_map[item_group]['position']
+            place_pose.position.x = np.float(dropbox_position[0])
+            place_pose.position.y = np.float(dropbox_position[1])
+            place_pose.position.z = np.float(dropbox_position[2])
 
-        try:
-            pick_place_routine = rospy.ServiceProxy('pick_place_routine', PickPlace)
+            # Create a list of dictionaries (made with make_yaml_dict()) for later output to yaml format
+            yaml_dict = make_yaml_dict(test_scene_num, arm_name, object_name, pick_pose, place_pose)
+            dict_list.append(yaml_dict)
 
-            # TODO: Insert your message variables to be sent as a service request
-            resp = pick_place_routine(TEST_SCENE_NUM, OBJECT_NAME, WHICH_ARM, PICK_POSE, PLACE_POSE)
+            rospy.loginfo("Pick list item = %s, arm = %s, pick_pos = %s, place_pos = %s" % (item_name, group, pick_pose, place_pose))
 
-            print ("Response: ",resp.success)
+        else:
+            rospy.loginfo("Pick list item = %s not found" % (item_name))
 
-        except rospy.ServiceException, e:
-            print "Service call failed: %s"%e
-
-    # TODO: Output your request parameters into output yaml file
-
+    # Output your request parameters into output yaml file
+    yaml_filename = 'output_' + str(test_scene_num.data) + '.yaml'
+    send_to_yaml(yaml_filename, dict_list)
+    rospy.loginfo("Saved %s" % (yaml_filename))
 
 
 if __name__ == '__main__':
@@ -216,7 +251,12 @@ if __name__ == '__main__':
     object_markers_pub = rospy.Publisher("/object_markers", Marker, queue_size=1)
     detected_objects_pub = rospy.Publisher("/detected_objects", DetectedObjectsArray, queue_size=1)
 
-    # TODO: Load Model From disk
+    # Load Model From disk
+    model = pickle.load(open('model.sav', 'rb'))
+    clf = model['classifier']
+    encoder = LabelEncoder()
+    encoder.classes_ = model['classes']
+    scaler = model['scaler']
 
     # Initialize color_list
     get_color_list.color_list = []
