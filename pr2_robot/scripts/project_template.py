@@ -46,6 +46,14 @@ def send_to_yaml(yaml_filename, dict_list):
     with open(yaml_filename, 'w') as outfile:
         yaml.dump(data_dict, outfile, default_flow_style=False)
 
+# Helper to define Pose from coordinates
+def pose(coordinates):
+    pos = Pose()     
+    pos.position.x = np.float(coordinates[0])
+    pos.position.y = np.float(coordinates[1])
+    pos.position.z = np.float(coordinates[2])
+    return pos
+
 # Callback function for your Point Cloud Subscriber
 def pcl_callback(pcl_msg):
 
@@ -171,21 +179,17 @@ def pcl_callback(pcl_msg):
     # Could add some logic to determine whether or not your object detections are robust
     # before calling pr2_mover()
     try:
-        pr2_mover(detected_objects_list)
+        pr2_mover(detected_objects)
     except rospy.ROSInterruptException:
         pass
 
 # function to load parameters and request PickPlace service
 def pr2_mover(object_list):
 
-    # Initialize variables
-    labels = []
-    centroids = []
-    pick_position = []
-    dropbox_position = []
+    output = []
 
     test_scene_num = Int32()
-    test_scene_num.data = 1
+    test_scene_num.data = 3
 
     # Get/Read parameters
     pick_list = rospy.get_param('/object_list')
@@ -193,46 +197,36 @@ def pr2_mover(object_list):
 
     for pick_list_item in pick_list:
 
-        item_name, item_group = pick_list_item['group']
+        item_name, item_group = pick_list_item['name'], pick_list_item['group']
 
         # Find matching detected objects
-        matches = [do for do in object_list if do.label = item_name]
+        matches = [do for do in object_list if do.label == item_name]
 
         if matches:
             target_object = matches[0]
 
-            object_name, arm_name, = String(), String()
-            pick_pose, place_pose = Pose(), Pose()
-
-            # calculate centroid and other necessary properties
-            points = ros_to_pcl(target_object.cloud).to_array()
-            pick_position = np.mean(points, axis=0)[:3]
-            centroids.append(pick_position)
-        
-            pick_pose.position.x = np.float(pick_position[0])
-            pick_pose.position.y = np.float(pick_position[1])
-            pick_pose.position.z = np.float(pick_position[2])
-
+            object_name = String()
             object_name.data = str(target_object.label)
+
+            arm_name = String()
             arm_name.data = dropbox_map[item_group]['name']
-        
-            dropbox_position = dropbox_map[item_group]['position']
-            place_pose.position.x = np.float(dropbox_position[0])
-            place_pose.position.y = np.float(dropbox_position[1])
-            place_pose.position.z = np.float(dropbox_position[2])
 
-            # Create a list of dictionaries (made with make_yaml_dict()) for later output to yaml format
-            yaml_dict = make_yaml_dict(test_scene_num, arm_name, object_name, pick_pose, place_pose)
-            dict_list.append(yaml_dict)
+            pick_coords = np.mean(ros_to_pcl(target_object.cloud).to_array(), axis=0)[:3]
 
-            rospy.loginfo("Pick list item = %s, arm = %s, pick_pos = %s, place_pos = %s" % (item_name, group, pick_pose, place_pose))
+            place_coords = dropbox_map[item_group]['position']
+
+            # Add to list for later output to yaml
+            yaml_dict = make_yaml_dict(test_scene_num, arm_name, object_name, pose(pick_coords), pose(place_coords))
+            output.append(yaml_dict)
+
+            rospy.loginfo("Pick item = %s, arm = %s, pick_pos = %s, place_pos = %s" % (item_name, arm_name.data, pick_coords, place_coords))
 
         else:
-            rospy.loginfo("Pick list item = %s not found" % (item_name))
+            rospy.loginfo("Pick item = %s not found" % (item_name))
 
     # Output your request parameters into output yaml file
     yaml_filename = 'output_' + str(test_scene_num.data) + '.yaml'
-    send_to_yaml(yaml_filename, dict_list)
+    send_to_yaml(yaml_filename, output)
     rospy.loginfo("Saved %s" % (yaml_filename))
 
 
