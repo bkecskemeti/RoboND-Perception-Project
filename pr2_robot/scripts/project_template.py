@@ -189,7 +189,7 @@ def pr2_mover(object_list):
     output = []
 
     test_scene_num = Int32()
-    test_scene_num.data = 3
+    test_scene_num.data = 1
 
     # Get/Read parameters
     pick_list = rospy.get_param('/object_list')
