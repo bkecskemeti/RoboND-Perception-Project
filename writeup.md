@@ -14,6 +14,9 @@
 9. Congratulations!  Your Done!
 
 ---
+
+## [Rubric](https://review.udacity.com/#!/rubrics/1067/view) Points
+
 ## Writeup / README
 
 ### Exercise 1, 2 and 3 pipeline implemented
@@ -22,19 +25,112 @@ The perception pipeline is implemented as described in the [walkthrough exercise
 
 *RGB-D image ==> Statistical outlier filter ==> Downsampling ==> Passthrough filter ==> RANSAC plane segmentation ==> Euclidean clustering ==> Object recognition*
 
+The pipeline in implemented in [project_template.py](pr2_robot/scripts/project_template.py).
+
 #### 1. Statistical outlier filter
 
-![Point cloud](output/rviz_pointcloud.png?s=50)
+First remove the noise present in the input image using a statistical outlier filter.
+
+<img src="output/rviz_pointcloud.png" width="50%">
+
+I found the parameters for the statistical outlier filter were experimentally, setting the number of neighboring points to `10` and threshold factor `0.2`. Data points with distance larger than `mean distance + 0.2 * std dev` will be removed as outliers:
+
+```python
+cloud_filtered = cloud.make_statistical_outlier_filter()
+cloud_filtered.set_mean_k(10)    
+cloud_filtered.set_std_dev_mul_thresh(0.2)
+cloud_filtered = cloud_filtered.filter()
+```
 
 #### 2. Downsampling
 
+I used `LEAF_SIZE = 0.01` to reduce the image resolution.
+
+```python
+vox = cloud_filtered.make_voxel_grid_filter()
+LEAF_SIZE = 0.01
+vox.set_leaf_size(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE)
+cloud_filtered = vox.filter() 
+```
+
 #### 3. Passthrough filter 
+
+To exclude areas which are of no interest, I defined passthrough filters along the `x` and `z` axes.
+
+This confines the space into the area `[0.4 .. 0.8, -inf .. \inf, 0.5 .. 0.8]`.
+
+```python
+passthrough = cloud_filtered.make_passthrough_filter()
+passthrough.set_filter_field_name('z')
+axis_min, axis_max = 0.5, 0.8
+passthrough.set_filter_limits(axis_min, axis_max)
+
+cloud_filtered = passthrough.filter()
+
+passthrough = cloud_filtered.make_passthrough_filter()
+passthrough.set_filter_field_name('x')
+axis_min, axis_max = 0.4, 0.8
+passthrough.set_filter_limits (axis_min, axis_max)
+cloud_filtered = passthrough.filter()
+```
 
 #### 4. RANSAC plane segmentation 
 
+RANSAC plane fitting will separate the points belonging to the table and the objects:
+
+<img src="output/rviz_passthrough_table.png" width="30%">  <img src="output/rviz_passthrough_objects.png" width="30%">
+
+```python
+seg = cloud_filtered.make_segmenter()
+
+seg.set_model_type(pcl.SACMODEL_PLANE)
+seg.set_method_type(pcl.SAC_RANSAC)
+
+max_distance = 0.01
+seg.set_distance_threshold(max_distance)
+
+inliers, coefficients = seg.segment()
+
+cloud_table = cloud_filtered.extract(inliers, negative=False)
+cloud_objects = cloud_filtered.extract(inliers, negative=True)
+```
+
 #### 5. Euclidean clustering 
 
+Find clusters in the data points using Euclidean clustering. Points close to each other are identified as belonging to a distinct objects, which can be labelled later on.
+
+```python
+white_cloud = XYZRGB_to_XYZ(cloud_objects)
+tree = white_cloud.make_kdtree()
+
+ec = white_cloud.make_EuclideanClusterExtraction()
+
+ec.set_ClusterTolerance(0.01)
+ec.set_MinClusterSize(100)
+ec.set_MaxClusterSize(10000)
+
+ec.set_SearchMethod(tree)
+
+cluster_indices = ec.Extract()
+```
+
 #### 6. Object recognition
+
+The steps to classify the clustered data points is the following:
+1. Generate training data using [capture_features.py](./pr2_robot/scripts/capture_features.py). For each possible pick list item, `100` sample instances were generated in random orientation.
+2. Train SVM using [train_svm.py](./pr2_robot/scripts/train_svm.py)
+3. Extract features from point clusters and classify them using trained SVM, in [project_template.py](pr2_robot/scripts/project_template.py).
+
+##### Training the SVM classifier
+
+Features are extracted in [features.py](./pr2_robot/scripts/features.py). The feature vector is a concatenation of the HSV color histogram (#bins=32, range=0..256) and the surface normal histogram (#bins=32, range=-1..1). I tried also 16 bins, but the results were not so good.
+
+The original and normalized confusion matrices are:
+
+<img src="./confusion_mtx_32.png" width="40%">  <img src="./confusion_mtx_norm_32.png" width="40%">
+
+
+##### Classify point clusters
 
 
 ### Pick and Place Setup
