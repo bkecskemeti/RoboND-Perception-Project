@@ -99,6 +99,8 @@ cloud_objects = cloud_filtered.extract(inliers, negative=True)
 
 Find clusters in the data points using Euclidean clustering. Points close to each other are identified as belonging to a distinct objects, which can be labelled later on.
 
+<img src="output/rviz_clusters.png" width="50%">
+
 ```python
 white_cloud = XYZRGB_to_XYZ(cloud_objects)
 tree = white_cloud.make_kdtree()
@@ -129,14 +131,79 @@ The original and normalized confusion matrices are:
 
 <img src="./confusion_mtx_32.png" width="40%">  <img src="./confusion_mtx_norm_32.png" width="40%">
 
-
 ##### Classify point clusters
 
+For each cluster, extract feature vector:
+
+```python
+chists = compute_color_histograms(ros_cluster, using_hsv=True)
+normals = get_normals(ros_cluster)
+nhists = compute_normal_histograms(normals)
+feature = np.concatenate((chists, nhists))
+```
+
+Use trained model for predicting a label:
+```python
+prediction = clf.predict(scaler.transform(feature.reshape(1,-1)))
+label = encoder.inverse_transform(prediction)[0]
+detected_objects_labels.append(label)
+```
 
 ### Pick and Place Setup
 
 #### 1. For all three tabletop setups (`test*.world`), perform object recognition, then read in respective pick list (`pick_list_*.yaml`). Next construct the messages that would comprise a valid `PickPlace` request output them to `.yaml` format.
 
+The generation of the `PickPlace` requests was done using these steps:
+
+1. Read pick list:
+```python
+pick_list = rospy.get_param('/object_list')
+```
+
+2. Read stow locations (to a map by `group` as identifier key):
+```python
+dropbox_map = dict([dropbox['group'], dropbox] for dropbox in rospy.get_param('/dropbox')) 
+```
+
+3. For each pick list item, see if we have it in the object list given by perception:
+```python
+matches = [do for do in object_list if do.label == item_name]
+```
+
+If there are no objects in the scene that are perceived to be the pick list item, log the missing item and go to the next pick list item.
+
+If there are multiple matching objects, take the first one.
+
+4. Calculate pick pose, place pose, and other necessary output
+
+* The pick pose is the centroid of the cluster,
+* the place pose is the position of the dropbox assigned to the picklist item
+* the arm name is the one closer to the dropbox assigned to the picklist item (left or right)
+
+```python
+object_name = String()
+object_name.data = str(target_object.label)
+
+arm_name = String()
+arm_name.data = dropbox_map[item_group]['name']
+
+pick_coords = np.mean(ros_to_pcl(target_object.cloud).to_array(), axis=0)[:3]
+
+place_coords = dropbox_map[item_group]['position']
+
+yaml_dict = make_yaml_dict(test_scene_num, arm_name, object_name, pose(pick_coords), pose(place_coords))
+output.append(yaml_dict)
+
+rospy.loginfo("Pick item = %s, arm = %s, pick_pos = %s, place_pos = %s" % (item_name, arm_name.data, pick_coords, place_coords))
+```
+
+#### Results
+
+world | identified | total | success ratio | link
+--- | --- | --- | --- | ---
+1 | 3 | 3 | 100% | [output_1.yaml](./output/output_1.yaml)
+2 | 5 | 5 | 100% | [output_2.yaml](./output/output_2.yaml)
+3 | 6 | 8 |  75% | [output_3.yaml](./output/output_3.yaml)
 
 
 
