@@ -25,15 +25,15 @@ The perception pipeline is implemented as described in the [walkthrough exercise
 
 *RGB-D image ==> Statistical outlier filter ==> Downsampling ==> Passthrough filter ==> RANSAC plane segmentation ==> Euclidean clustering ==> Object recognition*
 
-The pipeline in implemented in [project_template.py](pr2_robot/scripts/project_template.py).
+The pipeline is implemented in [project_template.py](pr2_robot/scripts/project_template.py).
 
 #### 1. Statistical outlier filter
 
-First remove the noise present in the input image using a statistical outlier filter.
+First remove the noise present in the input image, using a statistical outlier filter.
 
 <img src="output/rviz_pointcloud.png" width="50%">
 
-I found the parameters for the statistical outlier filter were experimentally, setting the number of neighboring points to `10` and threshold factor `0.2`. Data points with distance larger than `mean distance + 0.2 * std dev` will be removed as outliers:
+I found the parameters for the statistical outlier filter experimentally, setting the number of neighboring points to `10` and threshold factor `0.2`. Data points with distance larger than `mean distance + 0.2 * std dev` will be removed as outliers:
 
 ```python
 cloud_filtered = cloud.make_statistical_outlier_filter()
@@ -76,7 +76,7 @@ cloud_filtered = passthrough.filter()
 
 #### 4. RANSAC plane segmentation 
 
-RANSAC plane fitting will separate the points belonging to the table and the objects:
+RANSAC plane fitting will separate the points belonging to the table and to the objects:
 
 <img src="output/rviz_passthrough_table.png" width="30%">  <img src="output/rviz_passthrough_objects.png" width="30%">
 
@@ -97,7 +97,7 @@ cloud_objects = cloud_filtered.extract(inliers, negative=True)
 
 #### 5. Euclidean clustering 
 
-Find clusters in the data points using Euclidean clustering. Points close to each other are identified as belonging to a distinct objects, which can be labelled later on.
+The goal is to find clusters in the data points using Euclidean clustering. Points close to each other are identified as belonging to distinct objects, which can be labelled later on.
 
 <img src="output/rviz_clusters.png" width="50%">
 
@@ -118,14 +118,14 @@ cluster_indices = ec.Extract()
 
 #### 6. Object recognition
 
-The steps to classify the clustered data points is the following:
+The steps to classify the clustered data points are the following:
 1. Generate training data using [capture_features.py](./pr2_robot/scripts/capture_features.py). For each possible pick list item, `100` sample instances were generated in random orientation.
-2. Train SVM using [train_svm.py](./pr2_robot/scripts/train_svm.py)
-3. Extract features from point clusters and classify them using trained SVM, in [project_template.py](pr2_robot/scripts/project_template.py).
+2. Train the SVM using [train_svm.py](./pr2_robot/scripts/train_svm.py)
+3. Extract features from the point clusters and classify them using the trained SVM, in [project_template.py](pr2_robot/scripts/project_template.py).
 
 ##### Training the SVM classifier
 
-Features are extracted in [features.py](./pr2_robot/scripts/features.py). The feature vector is a concatenation of the HSV color histogram (#bins=32, range=0..256) and the surface normal histogram (#bins=32, range=-1..1). I tried also 16 bins, but the results were not so good.
+Features are extracted using [features.py](./pr2_robot/scripts/features.py). The feature vector is a concatenation of the HSV color histogram (#bins=32, range=0..256) and the surface normal histogram (#bins=32, range=-1..1). I tried also with 16 bins, but the results were not so good.
 
 The original and normalized confusion matrices are:
 
@@ -133,7 +133,7 @@ The original and normalized confusion matrices are:
 
 ##### Classify point clusters
 
-For each cluster, extract feature vector:
+For each cluster, extract the feature vector:
 
 ```python
 chists = compute_color_histograms(ros_cluster, using_hsv=True)
@@ -142,18 +142,28 @@ nhists = compute_normal_histograms(normals)
 feature = np.concatenate((chists, nhists))
 ```
 
-Use trained model for predicting a label:
+Use the trained model for predicting a label:
 ```python
 prediction = clf.predict(scaler.transform(feature.reshape(1,-1)))
 label = encoder.inverse_transform(prediction)[0]
 detected_objects_labels.append(label)
 ```
 
+Publish the labels to a topic to be displayed in RViz:
+```python
+label_pos = list(white_cloud[pts_list[0]])
+label_pos[2] += .4
+object_markers_pub.publish(make_label(label,label_pos, index))
+```
+
+<img src="output/rviz_labels.png" width="50%">
+
+
 ### Pick and Place Setup
 
 #### 1. For all three tabletop setups (`test*.world`), perform object recognition, then read in respective pick list (`pick_list_*.yaml`). Next construct the messages that would comprise a valid `PickPlace` request output them to `.yaml` format.
 
-The generation of the `PickPlace` requests was done using these steps:
+Steps to generate the `PickPlace` requests:
 
 1. Read pick list:
 ```python
@@ -170,15 +180,15 @@ dropbox_map = dict([dropbox['group'], dropbox] for dropbox in rospy.get_param('/
 matches = [do for do in object_list if do.label == item_name]
 ```
 
-If there are no objects in the scene that are perceived to be the pick list item, log the missing item and go to the next pick list item.
+If there are no objects in the scene, which are perceived to be the pick list item, log the missing item and go to the next pick list item.
 
 If there are multiple matching objects, take the first one.
 
 4. Calculate pick pose, place pose, and other necessary output
 
 * The pick pose is the centroid of the cluster,
-* the place pose is the position of the dropbox assigned to the picklist item
-* the arm name is the one closer to the dropbox assigned to the picklist item (left or right)
+* The place pose is the position of the dropbox assigned to the picklist item,
+* The arm name is the one closer to the dropbox assigned to the picklist item (left or right).
 
 ```python
 object_name = String()
@@ -206,7 +216,9 @@ world | identified | total | success ratio | link
 3 | 6 | 8 |  75% | [output_3.yaml](./output/output_3.yaml)
 
 
+### Possible improvements
 
+* Improve robustness: objects are not always identified consistently, sometimes the labels change or disappear. Some logic could be developed which tracks objects and their labels and establishes a confidence level for each object relative to each label.
 
 
 
